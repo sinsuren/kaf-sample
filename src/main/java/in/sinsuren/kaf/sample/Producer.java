@@ -10,10 +10,23 @@ public class Producer {
     this.queueManager = queueManager;
   }
 
+  // Send message without key (Round-robin partitioning)
   public void send(String message) {
-    // Round-robin partition selection
-    int partition = partitionCounter.getAndIncrement() % queueManager.partitionCount;
+    int partition = partitionCounter.getAndIncrement() % queueManager.getPartitionCount();
     queueManager.append(message, partition);
     System.out.println("Message produced to partition " + partition + ": " + message);
+  }
+
+  // Send message with key (Hash-based partitioning)
+  public void send(String key, String message) {
+    int partition = getPartitionForKey(key);
+    queueManager.append(message, partition);
+    System.out.println(
+        "Message produced to partition " + partition + " with key: " + key + " - " + message);
+  }
+
+  // Compute the partition using a hash of the key
+  private int getPartitionForKey(String key) {
+    return Math.abs(key.hashCode()) % queueManager.getPartitionCount();
   }
 }
