@@ -3,16 +3,23 @@ package in.sinsuren.kaf.sample;
 import java.util.List;
 import java.util.ArrayList;
 
+import java.util.List;
+import java.util.ArrayList;
+
 public class Consumer {
     private final QueueManager queueManager;
-    private long currentOffset = 0;
+    private long currentOffset;
     private final int partition;
+    private final OffsetManager offsetManager;
 
-    public Consumer(QueueManager queueManager, int partition) {
+    public Consumer(QueueManager queueManager, String consumerId, String topic, int partition) {
         this.queueManager = queueManager;
         this.partition = partition;
+        this.offsetManager = new OffsetManager(consumerId, topic, partition);
+        this.currentOffset = offsetManager.loadOffset();  // Load persisted offset
     }
 
+    // Consume a batch of messages
     public List<String> consumeBatch(int batchSize) {
         List<String> messages = new ArrayList<>();
         for (int i = 0; i < batchSize; i++) {
@@ -20,8 +27,9 @@ public class Consumer {
             if (message != null) {
                 messages.add(message);
                 currentOffset++;
+                acknowledge();  // Acknowledge after reading
             } else {
-                break; // No more messages to consume
+                break;  // No more messages to consume
             }
         }
         if (messages.isEmpty()) {
@@ -32,11 +40,17 @@ public class Consumer {
         return messages;
     }
 
+    // Acknowledge the message by saving the current offset
+    private void acknowledge() {
+        offsetManager.saveOffset(currentOffset);
+        System.out.println("Offset updated to " + currentOffset);
+    }
+
     public void consumeWithRetry(int retries, int retryIntervalMs) {
         int attempt = 0;
         while (attempt < retries) {
             try {
-                List<String> messages = consumeBatch(10); // Batch size of 10
+                List<String> messages = consumeBatch(1); // Batch size of 10
                 if (!messages.isEmpty()) {
                     break;
                 }

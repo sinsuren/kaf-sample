@@ -14,6 +14,11 @@ public class QueueManager {
       Duration.ofHours(24).toMillis(); // 24 hours retention
 
   private final String topic;
+
+  public int getPartitionCount() {
+    return partitionCount;
+  }
+
   public final int partitionCount;
   private final Lock lock = new ReentrantLock();
 
