@@ -54,6 +54,7 @@ public class Consumer {
                 if (!messages.isEmpty()) {
                     break;
                 }
+
             } catch (Exception e) {
                 attempt++;
                 System.out.println("Consumption failed. Retrying... Attempt: " + attempt);
