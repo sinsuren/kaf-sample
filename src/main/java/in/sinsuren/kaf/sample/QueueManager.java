@@ -10,12 +10,19 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 
+import java.io.*;
+import java.nio.file.*;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+
 public class QueueManager {
   private static final String LOG_DIR = "queue_logs";  // Directory for log files
   private final String topic;
   private final int partitionCount;
   private final long segmentSizeLimit;
-  private final Lock lock = new ReentrantLock();
+  private final ReadWriteLock lock = new ReentrantReadWriteLock();
 
   public QueueManager(String topic, int partitionCount, long segmentSizeLimit) throws IOException {
     this.topic = topic;
@@ -34,7 +41,7 @@ public class QueueManager {
 
   // Append message to a partition log
   public void append(String message, int partition) {
-    lock.lock();
+    lock.writeLock().lock();
     try {
       String partitionDir = LOG_DIR + File.separator + topic + "-partition-" + partition;
       File[] logFiles = new File(partitionDir).listFiles((dir, name) -> name.endsWith(".log"));
@@ -52,13 +59,13 @@ public class QueueManager {
     } catch (IOException e) {
       e.printStackTrace();
     } finally {
-      lock.unlock();
+      lock.writeLock().unlock();
     }
   }
 
   // Read message from a specific offset
   public String read(long offset, int partition) {
-    lock.lock();
+    lock.readLock().lock();
     try {
       String partitionDir = LOG_DIR + File.separator + topic + "-partition-" + partition;
       File[] logFiles = new File(partitionDir).listFiles((dir, name) -> name.endsWith(".log"));
@@ -79,14 +86,14 @@ public class QueueManager {
     } catch (IOException e) {
       e.printStackTrace();
     } finally {
-      lock.unlock();
+      lock.readLock().unlock();
     }
     return null;
   }
 
   // Get latest offset in a partition
   public long getLatestOffset(int partition) {
-    lock.lock();
+    lock.readLock().lock();
     try {
       String partitionDir = LOG_DIR + File.separator + topic + "-partition-" + partition;
       File[] logFiles = new File(partitionDir).listFiles((dir, name) -> name.endsWith(".log"));
@@ -102,30 +109,8 @@ public class QueueManager {
     } catch (IOException e) {
       e.printStackTrace();
     } finally {
-      lock.unlock();
+      lock.readLock().unlock();
     }
     return -1;
-  }
-
-  // Retention policy to delete old logs
-  public void applyRetentionPolicy(long retentionMillis) {
-    lock.lock();
-    try {
-      for (int i = 0; i < partitionCount; i++) {
-        String partitionDir = LOG_DIR + File.separator + topic + "-partition-" + i;
-        File[] logFiles = new File(partitionDir).listFiles((dir, name) -> name.endsWith(".log"));
-        long now = System.currentTimeMillis();
-
-        if (logFiles != null) {
-          for (File logFile : logFiles) {
-            if (now - logFile.lastModified() > retentionMillis) {
-              logFile.delete();
-            }
-          }
-        }
-      }
-    } finally {
-      lock.unlock();
-    }
   }
 }
