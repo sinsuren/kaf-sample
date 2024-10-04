@@ -4,8 +4,9 @@ import java.io.IOException;
 
 public class Main {
   public static void main(String[] args) throws IOException {
-    QueueManager queueManager = new QueueManager("my_topic", 3, 1024 * 1024); // 3 partitions, segment size of 1MB
-    OffsetManager offsetManager = new OffsetManager(3);
+    QueueManager queueManager =
+        new QueueManager("my_topic", 3, 1024 * 1024); // 3 partitions, segment size of 1MB
+    OffsetManager offsetManager = new OffsetManager("my_topic", 3);
 
     // Create producer
     Producer producer = new Producer(queueManager);
@@ -21,8 +22,8 @@ public class Main {
     Consumer consumer3 = new Consumer(queueManager, offsetManager, 2);
 
     // Consume messages from partition 0
-    consumer.consume();  // Consume "Hello, World!"
-    consumer2.consume();  // No more messages.
-    consumer3.consume();  // No more messages.
+    consumer.consume(); // Consume "Hello, World!"
+    consumer2.consume(); // No more messages.
+    consumer3.consume(); // No more messages.
   }
 }
