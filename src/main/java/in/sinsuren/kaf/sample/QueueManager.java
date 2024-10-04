@@ -2,59 +2,51 @@ package in.sinsuren.kaf.sample;
 
 import java.io.*;
 import java.nio.file.*;
-import java.time.Duration;
-import java.time.Instant;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.stream.Stream;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
 
 public class QueueManager {
-  private static final String LOG_DIR = "queue_logs"; // Directory for log files
-  private static final long MAX_LOG_SIZE = 1024 * 1024; // 1 MB max size for log files
-  private static final long RETENTION_PERIOD_MS =
-      Duration.ofHours(24).toMillis(); // 24 hours retention
-
+  private static final String LOG_DIR = "queue_logs";  // Directory for log files
   private final String topic;
-
-  public int getPartitionCount() {
-    return partitionCount;
-  }
-
-  public final int partitionCount;
+  private final int partitionCount;
+  private final long segmentSizeLimit;
   private final Lock lock = new ReentrantLock();
 
-  public QueueManager(String topic, int partitionCount) throws IOException {
+  public QueueManager(String topic, int partitionCount, long segmentSizeLimit) throws IOException {
     this.topic = topic;
     this.partitionCount = partitionCount;
+    this.segmentSizeLimit = segmentSizeLimit;
+    initializePartitions();
+  }
+
+  private void initializePartitions() throws IOException {
     Files.createDirectories(Paths.get(LOG_DIR));
     for (int i = 0; i < partitionCount; i++) {
-      createLogFile(i);
+      String partitionDir = LOG_DIR + File.separator + topic + "-partition-" + i;
+      Files.createDirectories(Paths.get(partitionDir));
     }
   }
 
-  private String getPartitionLogFile(int partition) {
-    return LOG_DIR + File.separator + topic + "_partition_" + partition + ".log";
-  }
-
-  private void createLogFile(int partition) throws IOException {
-    String logFilePath = getPartitionLogFile(partition);
-    File logFile = new File(logFilePath);
-    if (!logFile.exists()) {
-      logFile.createNewFile();
-    }
-  }
-
+  // Append message to a partition log
   public void append(String message, int partition) {
     lock.lock();
     try {
-      String logFilePath = getPartitionLogFile(partition);
-      File logFile = new File(logFilePath);
+      String partitionDir = LOG_DIR + File.separator + topic + "-partition-" + partition;
+      File[] logFiles = new File(partitionDir).listFiles((dir, name) -> name.endsWith(".log"));
 
-      // Check if file size exceeds limit
-      if (logFile.length() > MAX_LOG_SIZE) {
-        rotateLogFile(partition);
+      Arrays.sort(logFiles, Comparator.comparingLong(File::lastModified));
+      File latestLogFile = (logFiles == null || logFiles.length == 0) ? null : logFiles[logFiles.length - 1];
+      if (latestLogFile == null || latestLogFile.length() > segmentSizeLimit) {
+        latestLogFile = new File(partitionDir, "segment-" + System.currentTimeMillis() + ".log");
+        latestLogFile.createNewFile();
       }
 
-      try (FileWriter writer = new FileWriter(logFile, true)) {
+      try (FileWriter writer = new FileWriter(latestLogFile, true)) {
         writer.write(message + "\n");
       }
     } catch (IOException e) {
@@ -64,18 +56,24 @@ public class QueueManager {
     }
   }
 
+  // Read message from a specific offset
   public String read(long offset, int partition) {
     lock.lock();
     try {
-      String logFilePath = getPartitionLogFile(partition);
-      try (BufferedReader reader = new BufferedReader(new FileReader(logFilePath))) {
-        String line;
-        long currentOffset = 0;
-        while ((line = reader.readLine()) != null) {
-          if (currentOffset == offset) {
-            return line;
+      String partitionDir = LOG_DIR + File.separator + topic + "-partition-" + partition;
+      File[] logFiles = new File(partitionDir).listFiles((dir, name) -> name.endsWith(".log"));
+      Arrays.sort(logFiles, Comparator.comparingLong(File::lastModified));
+
+      long currentOffset = 0;
+      for (File logFile : logFiles) {
+        try (BufferedReader reader = new BufferedReader(new FileReader(logFile))) {
+          String line;
+          while ((line = reader.readLine()) != null) {
+            if (currentOffset == offset) {
+              return line;
+            }
+            currentOffset++;
           }
-          currentOffset++;
         }
       }
     } catch (IOException e) {
@@ -86,13 +84,21 @@ public class QueueManager {
     return null;
   }
 
-  public long getOffset(int partition) {
+  // Get latest offset in a partition
+  public long getLatestOffset(int partition) {
     lock.lock();
     try {
-      String logFilePath = getPartitionLogFile(partition);
-      try (BufferedReader reader = new BufferedReader(new FileReader(logFilePath))) {
-        return reader.lines().count();
+      String partitionDir = LOG_DIR + File.separator + topic + "-partition-" + partition;
+      File[] logFiles = new File(partitionDir).listFiles((dir, name) -> name.endsWith(".log"));
+      Arrays.sort(logFiles, Comparator.comparingLong(File::lastModified));
+
+      long currentOffset = 0;
+      for (File logFile : logFiles) {
+        try (BufferedReader reader = new BufferedReader(new FileReader(logFile))) {
+          currentOffset += reader.lines().count();
+        }
       }
+      return currentOffset;
     } catch (IOException e) {
       e.printStackTrace();
     } finally {
@@ -101,28 +107,25 @@ public class QueueManager {
     return -1;
   }
 
-  private void rotateLogFile(int partition) throws IOException {
-    String logFilePath = getPartitionLogFile(partition);
-    File oldLogFile = new File(logFilePath);
-    String backupLogFile = logFilePath + "." + Instant.now().toEpochMilli();
-    Files.move(oldLogFile.toPath(), Paths.get(backupLogFile), StandardCopyOption.REPLACE_EXISTING);
-    createLogFile(partition);
-  }
+  // Retention policy to delete old logs
+  public void applyRetentionPolicy(long retentionMillis) {
+    lock.lock();
+    try {
+      for (int i = 0; i < partitionCount; i++) {
+        String partitionDir = LOG_DIR + File.separator + topic + "-partition-" + i;
+        File[] logFiles = new File(partitionDir).listFiles((dir, name) -> name.endsWith(".log"));
+        long now = System.currentTimeMillis();
 
-  // Cleanup old log files based on retention policy
-  public void cleanup() {
-    File logDir = new File(LOG_DIR);
-    File[] files = logDir.listFiles();
-    if (files != null) {
-      for (File file : files) {
-        if (file.isFile() && file.getName().contains(topic)) {
-          long lastModified = file.lastModified();
-          long age = System.currentTimeMillis() - lastModified;
-          if (age > RETENTION_PERIOD_MS) {
-            file.delete();
+        if (logFiles != null) {
+          for (File logFile : logFiles) {
+            if (now - logFile.lastModified() > retentionMillis) {
+              logFile.delete();
+            }
           }
         }
       }
+    } finally {
+      lock.unlock();
     }
   }
 }
